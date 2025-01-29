@@ -1,14 +1,18 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Bot, Send, User, Plus } from "lucide-react";
+import { Bot, Send, User, Plus, SquarePen } from "lucide-react";
 import { parseInlineCode } from "../utils/parseInlineCode";
 import type { Message, Conversation } from "../types/chat";
 import { nanoid } from "nanoid";
+import ReactMarkdown from "react-markdown";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
+import remarkGfm from "remark-gfm";
 
 export default function ChatInterface() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
@@ -17,6 +21,7 @@ export default function ChatInterface() {
   const [isLoading, setIsLoading] = useState(false);
 
   const currentConversation = conversations.find((conv) => conv.id === currentConversationId);
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   const createNewConversation = useCallback(() => {
     const newConversation: Conversation = {
@@ -27,6 +32,12 @@ export default function ChatInterface() {
     setConversations((prev) => [...prev, newConversation]);
     setCurrentConversationId(newConversation.id);
   }, [conversations.length]);
+
+  const handleInputFocus = useCallback(() => {
+    if (currentConversationId === null) {
+      createNewConversation();
+    }
+  }, [currentConversationId, createNewConversation]);
 
   const addMessage = useCallback(
     (message: Message) => {
@@ -63,6 +74,10 @@ export default function ChatInterface() {
 
   const handleSendMessage = useCallback(() => {
     if (inputMessage.trim() === "" || currentConversationId === null || isLoading) return;
+
+    if (currentConversationId === null) {
+      createNewConversation();
+    }
 
     setIsLoading(true);
 
@@ -162,18 +177,28 @@ export default function ChatInterface() {
     setIsLoading(false);
   }, [addMessage]);
 
+  useEffect(() => {
+    const viewport = document.querySelector("[data-radix-scroll-area-viewport]");
+    if (viewport) {
+      const lastMessage = viewport.lastElementChild?.lastElementChild;
+      lastMessage?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [currentConversation?.messages]);
+
   return (
     <>
-      <div className="w-64 bg-gray-800 p-4 text-white">
-        <h2 className="mb-4 text-xl font-bold">Conversations</h2>
-        <Button onClick={createNewConversation} className="mb-4 w-full">
-          <Plus size={20} className="mr-2" /> New Chat
-        </Button>
+      <div className="border-border w-64 border bg-background p-4 text-foreground">
+        <div className="mb-4 flex w-full items-center justify-between">
+          <h2 className="text-xl font-bold">JJCX Chat</h2>
+          <Button variant="ghost" onClick={createNewConversation} className="">
+            <SquarePen size={20} />
+          </Button>
+        </div>
         <ScrollArea className="h-[calc(100vh-10rem)]">
           {conversations.map((conversation) => (
             <div
               key={conversation.id}
-              className={`mb-2 cursor-pointer rounded p-2 ${conversation.id === currentConversationId ? "bg-gray-700" : "hover:bg-gray-700"}`}
+              className={`mb-2 cursor-pointer rounded p-2 ${conversation.id === currentConversationId ? "bg-background" : "hover:bg-gray-700"}`}
               onClick={() => setCurrentConversationId(conversation.id)}
             >
               {conversation.title}
@@ -181,69 +206,142 @@ export default function ChatInterface() {
           ))}
         </ScrollArea>
       </div>
-      <div className="flex flex-1 flex-col">
+      <div className="mx-auto flex max-w-4xl flex-1 flex-col bg-background text-foreground">
         <ScrollArea className="flex-1 p-4">
-          {currentConversation?.messages.map((message) => (
-            <div
-              key={message.id}
-              className={`mb-4 flex items-start ${message.sender === "user" ? "justify-end" : "justify-start"}`}
-            >
-              {message.sender === "ai" && (
-                <Avatar className="mr-2">
-                  <AvatarFallback>
-                    <Bot size={24} />
-                  </AvatarFallback>
-                </Avatar>
-              )}
+          <div ref={scrollRef}>
+            {currentConversation?.messages.map((message) => (
               <div
-                className={`max-w-[70%] rounded-lg p-3 ${message.sender === "user" ? "bg-blue-500 text-white" : "bg-gray-200"}`}
+                className={`max-w-[90%] rounded-lg p-3 ${message.sender === "user" ? "bg-accent rounded-2xl text-foreground" : "bg-background text-foreground"}`}
               >
-                {message.sender === "ai"
-                  ? message.content.startsWith("<think>")
-                    ? // Split content by think tags and map each part
-                      message.content.split(/(<think>[\s\S]*?<\/think>)/).map((part, index) => {
-                        const key = `${message.id}-part-${index}-${part.slice(0, 10)}`;
-                        if (part.startsWith("<think>")) {
-                          // style the think content
-                          return (
-                            <div
-                              key={key}
-                              className="rounded border-l-4 border-gray-400 bg-gray-100 p-2 italic text-gray-600"
+                {message.sender === "ai" ? (
+                  message.content.startsWith("<think>") ? (
+                    message.content.split(/(<think>[\s\S]*?<\/think>)/).map((part, index) => {
+                      const key = `${message.id}-part-${index}-${part.slice(0, 10)}`;
+                      if (part.startsWith("<think>")) {
+                        return (
+                          <div
+                            key={key}
+                            className="text-muted-foreground border-border mb-2 border-l-2 bg-background p-2 text-sm italic"
+                          >
+                            <ReactMarkdown
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                code({ node, inline, className, children, ...props }: any) {
+                                  const match = /language-(\w+)/.exec(className || "");
+                                  return inline ? (
+                                    <code
+                                      className="bg-muted rounded px-1.5 py-0.5 text-sm"
+                                      {...props}
+                                    >
+                                      {children}
+                                    </code>
+                                  ) : (
+                                    <SyntaxHighlighter
+                                      language={match ? match[1] : ""}
+                                      style={oneDark}
+                                      PreTag="div"
+                                      className="rounded-lg"
+                                      {...props}
+                                    >
+                                      {String(children).replace(/\n$/, "")}
+                                    </SyntaxHighlighter>
+                                  );
+                                },
+                              }}
                             >
-                              {parseInlineCode(message.content.replace(/<\/?think>/g, ""))}
-                            </div>
+                              {part.replace(/<\/?think>/g, "")}
+                            </ReactMarkdown>
+                          </div>
+                        );
+                      } else if (part.trim() !== "") {
+                        return (
+                          <div key={key}>
+                            <ReactMarkdown
+                              key={`markdown-${key}`}
+                              remarkPlugins={[remarkGfm]}
+                              components={{
+                                code({ node, inline, className, children, ...props }: any) {
+                                  const match = /language-(\w+)/.exec(className || "");
+                                  return inline ? (
+                                    <code
+                                      className="bg-muted rounded px-1.5 py-0.5 text-sm"
+                                      {...props}
+                                    >
+                                      {children}
+                                    </code>
+                                  ) : (
+                                    <SyntaxHighlighter
+                                      language={match ? match[1] : ""}
+                                      style={oneDark}
+                                      PreTag="div"
+                                      className="rounded-lg"
+                                      {...props}
+                                    >
+                                      {String(children).replace(/\n$/, "")}
+                                    </SyntaxHighlighter>
+                                  );
+                                },
+                              }}
+                            >
+                              {part}
+                            </ReactMarkdown>
+                          </div>
+                        );
+                      }
+                      return null;
+                    })
+                  ) : (
+                    <ReactMarkdown
+                      key={`markdown-${message.id}`}
+                      remarkPlugins={[remarkGfm]}
+                      components={{
+                        code({ node, inline, className, children, ...props }: any) {
+                          const match = /language-(\w+)/.exec(className || "");
+                          return inline ? (
+                            <code className="bg-muted rounded px-1.5 py-0.5 text-sm" {...props}>
+                              {children}
+                            </code>
+                          ) : (
+                            <SyntaxHighlighter
+                              language={match ? match[1] : ""}
+                              style={oneDark}
+                              PreTag="div"
+                              className="rounded-lg"
+                              {...props}
+                            >
+                              {String(children).replace(/\n$/, "")}
+                            </SyntaxHighlighter>
                           );
-                        } else if (part.trim() !== "") {
-                          return <div key={key}>{parseInlineCode(part)}</div>;
-                        }
-                        return null;
-                      })
-                    : parseInlineCode(message.content)
-                  : message.content}
+                        },
+                      }}
+                    >
+                      {message.content}
+                    </ReactMarkdown>
+                  )
+                ) : (
+                  <div className="whitespace-pre-wrap">{message.content}</div>
+                )}
               </div>
-              {message.sender === "user" && (
-                <Avatar className="ml-2">
-                  <AvatarFallback>
-                    <User size={24} />
-                  </AvatarFallback>
-                </Avatar>
-              )}
-            </div>
-          ))}
+            ))}
+          </div>
         </ScrollArea>
-        <div className="border-t p-4">
-          <div className="flex items-center">
-            <Input
-              type="text"
-              placeholder="Type your message..."
-              value={inputMessage}
-              onChange={(e) => setInputMessage(e.target.value)}
-              onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-              className="mr-2 flex-1"
-            />
-            <Button onClick={handleSendMessage} disabled={currentConversationId === null}>
-              <Send size={20} />
-            </Button>
+        <div className="bg-muted rounded-t-2xl border-t p-4">
+          <div className="flex w-full flex-col items-center">
+            <div className="flex w-full">
+              <Input
+                type="text"
+                placeholder="Type your message..."
+                value={inputMessage}
+                onChange={(e) => setInputMessage(e.target.value)}
+                onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+                className="mr-2 flex-1"
+                onFocus={handleInputFocus}
+              />
+              <Button variant="ghost" onClick={handleSendMessage}>
+                <Send size={20} />
+              </Button>
+            </div>
+            <div className="flex w-full">Model picker</div>
           </div>
         </div>
       </div>
