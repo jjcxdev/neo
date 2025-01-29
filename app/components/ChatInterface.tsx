@@ -198,7 +198,28 @@ export default function ChatInterface() {
               <div
                 className={`max-w-[70%] rounded-lg p-3 ${message.sender === "user" ? "bg-blue-500 text-white" : "bg-gray-200"}`}
               >
-                {message.sender === "ai" ? parseInlineCode(message.content) : message.content}
+                {message.sender === "ai"
+                  ? message.content.startsWith("<think>")
+                    ? // Split content by think tags and map each part
+                      message.content.split(/(<think>[\s\S]*?<\/think>)/).map((part, index) => {
+                        const key = `${message.id}-part-${index}-${part.slice(0, 10)}`;
+                        if (part.startsWith("<think>")) {
+                          // style the think content
+                          return (
+                            <div
+                              key={key}
+                              className="rounded border-l-4 border-gray-400 bg-gray-100 p-2 italic text-gray-600"
+                            >
+                              {parseInlineCode(message.content.replace(/<\/?think>/g, ""))}
+                            </div>
+                          );
+                        } else if (part.trim() !== "") {
+                          return <div key={key}>{parseInlineCode(part)}</div>;
+                        }
+                        return null;
+                      })
+                    : parseInlineCode(message.content)
+                  : message.content}
               </div>
               {message.sender === "user" && (
                 <Avatar className="ml-2">
