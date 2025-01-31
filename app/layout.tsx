@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
+import { JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
-const inter = Inter({
+const jetBrains = JetBrains_Mono({
+  variable: "--font-jetBrains",
   subsets: ["latin"],
 });
 
@@ -18,7 +19,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className={`${inter.className} dark antialiased`}>{children}</body>
+      <body className={`${jetBrains.className} dark antialiased`}>{children}</body>
     </html>
   );
 }

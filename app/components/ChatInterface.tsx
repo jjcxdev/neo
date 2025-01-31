@@ -1,55 +1,141 @@
 "use client";
 
-import { useCallback, useState, useEffect, useRef } from "react";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Bot, Send, User, Plus, SquarePen } from "lucide-react";
-import { parseInlineCode } from "../utils/parseInlineCode";
-import type { Message, Conversation } from "../types/chat";
+import { useCallback, useState, useEffect, useRef, useMemo } from "react";
+import type { Message, Conversation } from "../types/types";
 import { nanoid } from "nanoid";
-import ReactMarkdown from "react-markdown";
-import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
-import { oneDark } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import remarkGfm from "remark-gfm";
+import React from "react";
+import _, { set } from "lodash";
+import {
+  MAX_VISIBLE_MESSAGES,
+  MAX_CONVERSATIONS,
+  CLEANUP_THRESHOLD,
+  API_TIMEOUT,
+  UPDATE_THRESHOLD,
+} from "../types/types";
+import { Sidebar } from "./Sidebar";
+import { MessageList } from "./MessageList";
+import { ChatInput } from "./ChatInput";
 
 export default function ChatInterface() {
+  // State Management
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [inputMessage, setInputMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
+  const [selectedModel, setSelectedModel] = useState("llama3.2:latest");
 
-  const currentConversation = conversations.find((conv) => conv.id === currentConversationId);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  // Refs for Memory Management
+  const messageCache = useRef<Map<string, Message[]>>(new Map());
+  const cleanupTimeout = useRef<NodeJS.Timeout | null>(null);
+  const abortController = useRef<AbortController | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const scrollToBottom = useCallback(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, []);
 
   const createNewConversation = useCallback(() => {
+    if (conversations.length >= MAX_CONVERSATIONS) {
+      const toRemove = conversations.slice(0, -MAX_CONVERSATIONS + 1);
+      toRemove.forEach((conv) => {
+        messageCache.current.delete(conv.id);
+        localStorage.removeItem(`chat_archive_${conv.id}`);
+      });
+    }
+
     const newConversation: Conversation = {
       id: nanoid(),
       title: `New Chat ${conversations.length + 1}`,
       messages: [],
     };
-    setConversations((prev) => [...prev, newConversation]);
+
+    setConversations((prev) => [...prev.slice(-MAX_CONVERSATIONS + 1), newConversation]);
     setCurrentConversationId(newConversation.id);
   }, [conversations.length]);
 
-  const handleInputFocus = useCallback(() => {
-    if (currentConversationId === null) {
-      createNewConversation();
+  const handleModelChange = useCallback(
+    (model: string) => {
+      setSelectedModel(model);
+      const currentChat = conversations.find((conv) => conv.id === currentConversationId);
+      if (!currentChat || currentChat.messages.length > 0) {
+        createNewConversation();
+      }
+    },
+    [createNewConversation, conversations, currentConversationId],
+  );
+
+  // Memoized Values
+  const currentConversation = useMemo(
+    () => conversations.find((conv) => conv.id === currentConversationId),
+    [conversations, currentConversationId],
+  );
+
+  const cleanupOldMessages = useCallback(() => {
+    setConversations((prev) =>
+      prev.map((conv) => ({
+        ...conv,
+        messages: conv.messages.slice(-MAX_VISIBLE_MESSAGES),
+      })),
+    );
+
+    const currentMessages = currentConversation?.messages || [];
+    if (currentMessages.length > MAX_VISIBLE_MESSAGES) {
+      const toArchive = currentMessages.slice(0, -MAX_VISIBLE_MESSAGES);
+      archiveMessages(currentConversationId!, toArchive);
     }
-  }, [currentConversationId, createNewConversation]);
+  }, [currentConversation, currentConversationId]);
+
+  const archiveMessages = async (conversationId: string, messages: Message[]) => {
+    try {
+      const key = `chat_archive_${conversationId}`;
+      const existing = JSON.parse(localStorage.getItem(key) || "[]");
+      localStorage.setItem(key, JSON.stringify([...existing, ...messages]));
+    } catch (error) {
+      console.error("Failed to archive messages:", error);
+    }
+  };
+
+  const loadMessagesFromStorage = async (
+    conversationId: string,
+    start: number,
+    count: number,
+  ): Promise<Message[]> => {
+    try {
+      const key = `chat_archive_${conversationId}`;
+      const archived = JSON.parse(localStorage.getItem(key) || "[]");
+      return archived.slice(start, start + count);
+    } catch (error) {
+      console.error("Failed to load archived messages:", error);
+      return [];
+    }
+  };
 
   const addMessage = useCallback(
     (message: Message) => {
-      setConversations((prev) =>
-        prev.map((conv) =>
+      setConversations((prev) => {
+        const updated = prev.map((conv) =>
           conv.id === currentConversationId
-            ? { ...conv, messages: [...conv.messages, message] }
+            ? {
+                ...conv,
+                messages: [...conv.messages, message],
+              }
             : conv,
-        ),
-      );
+        );
+
+        if (
+          currentConversationId &&
+          updated.find((c) => c.id === currentConversationId)?.messages.length! > CLEANUP_THRESHOLD
+        ) {
+          if (cleanupTimeout.current) {
+            clearTimeout(cleanupTimeout.current);
+          }
+          cleanupTimeout.current = setTimeout(cleanupOldMessages, 1000);
+        }
+
+        return updated;
+      });
     },
-    [currentConversationId],
+    [currentConversationId, cleanupOldMessages],
   );
 
   const updateLastMessage = useCallback(
@@ -61,7 +147,7 @@ export default function ChatInterface() {
                 ...conv,
                 messages: conv.messages.map((msg, idx) =>
                   idx === conv.messages.length - 1 && msg.sender === "ai"
-                    ? { ...msg, content: content }
+                    ? { ...msg, content }
                     : msg,
                 ),
               }
@@ -72,278 +158,232 @@ export default function ChatInterface() {
     [currentConversationId],
   );
 
-  const handleSendMessage = useCallback(() => {
+  // Debounced update function
+  const debouncedUpdate = useMemo(
+    () => _.debounce((content: string) => updateLastMessage(content), UPDATE_THRESHOLD),
+    [updateLastMessage],
+  );
+
+  const handleSendMessage = useCallback(async () => {
     if (inputMessage.trim() === "" || currentConversationId === null || isLoading) return;
 
-    if (currentConversationId === null) {
-      createNewConversation();
-    }
-
     setIsLoading(true);
-
-    // Add user message
     const userMessage: Message = {
       id: nanoid(),
       content: inputMessage,
       sender: "user",
     };
     addMessage(userMessage);
-
-    // Store message and clear input
     const messageToSend = inputMessage;
     setInputMessage("");
 
-    // Add temporary loading message
+    // Check if this is the first message in the conversation
+    const isFirstMessage = currentConversation?.messages.length === 0;
+
     const loadingMessage: Message = {
       id: nanoid(),
-      content: "▋", // Creates a typing indicator
+      content: "▋",
       sender: "ai",
     };
     addMessage(loadingMessage);
 
-    // Call Ollama API
-    fetch("/api/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        prompt: messageToSend,
-      }),
-    })
-      .then((response) => {
-        if (!response.body) throw new Error("No response body");
+    // Abort previous request if exists
+    if (abortController.current) {
+      abortController.current.abort();
+    }
 
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let aiContent = "";
+    abortController.current = new AbortController();
+    const timeout = setTimeout(() => abortController.current?.abort(), API_TIMEOUT);
 
-        function readStream() {
-          reader
-            .read()
-            .then(({ done, value }) => {
-              if (done) {
-                updateLastMessage(aiContent);
-                setIsLoading(false);
-                return;
+    const contextMessages =
+      currentConversation?.messages
+        .slice(-MAX_VISIBLE_MESSAGES)
+        .filter((msg) => msg.content !== "▋")
+        .map((msg) => ({
+          role: msg.sender === "user" ? "user" : "assistant",
+          content: msg.content,
+        })) || [];
+
+    let updateQueue: string[] = [];
+    let lastUpdate = Date.now();
+    let aiContent = "";
+
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          prompt: messageToSend,
+          model: selectedModel,
+          messages: contextMessages,
+        }),
+        signal: abortController.current.signal,
+      });
+
+      clearTimeout(timeout);
+
+      if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+      if (!response.body) throw new Error("No response body received");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const text = decoder.decode(value);
+        const lines = text.split("\n").filter((line) => line.trim());
+
+        for (const line of lines) {
+          try {
+            const parsedChunk = JSON.parse(line);
+            if (parsedChunk.response) {
+              updateQueue.push(parsedChunk.response);
+              if (Date.now() - lastUpdate > UPDATE_THRESHOLD) {
+                aiContent += updateQueue.join("");
+                updateQueue = [];
+                debouncedUpdate(aiContent + "▋");
+                lastUpdate = Date.now();
               }
+            }
+          } catch (e) {
+            console.warn("Failed to parse chunk:", line);
+            continue;
+          }
+        }
+      }
 
-              const chunk = decoder.decode(value);
-              // Splie the chunk into lines
-              const lines = chunk.split("\n").filter((line) => line.trim() !== "");
+      aiContent += updateQueue.join("");
+      updateLastMessage(aiContent);
 
+      // Generate title if this is the first message
+      if (isFirstMessage) {
+        const titleResponse = await fetch("/api/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            prompt: `Create a very concise title (2-3 words maximum) that capture the main topic of this conversation. Do not use quotes. Do not add any explanation. User: "${messageToSend}" Assistant: "${aiContent}" Title:`,
+            model: selectedModel,
+            messages: [],
+          }),
+        });
+
+        if (titleResponse.ok) {
+          let titleContent = "";
+          const titleReader = titleResponse.body?.getReader();
+          const titleDecoder = new TextDecoder();
+
+          if (titleReader) {
+            while (true) {
+              const { done, value } = await titleReader.read();
+              if (done) break;
+              const text = titleDecoder.decode(value);
+              const lines = text.split("\n").filter((line) => line.trim());
               for (const line of lines) {
                 try {
                   const parsedChunk = JSON.parse(line);
                   if (parsedChunk.response) {
-                    aiContent += parsedChunk.response;
+                    titleContent += parsedChunk.response;
                   }
                 } catch (e) {
-                  console.error("Error parsing chunk:", line, e);
                   continue;
                 }
               }
+            }
+          }
 
-              updateLastMessage(aiContent + "▋");
-              readStream();
-            })
-            .catch((error: Error) => {
-              console.error("Error reading stream", error);
-              handleStreamError();
-            });
+          // Process the title to ensure its concise
+          const processedTitle = titleContent
+            .trim()
+            .replace(/["']/g, "") // remove quotes
+            .replace(/^Title:?\s*/i, "") // remove "Title:" prefix
+            .split(/\s+/) // split into words
+            .slice(0, 4) // limit to 4 words
+            .join(" ");
+
+          // Update the conversation title
+          setConversations((prev) =>
+            prev.map((conv) =>
+              conv.id === currentConversationId
+                ? { ...conv, title: titleContent.trim().replace(/["']/g, "") }
+                : conv,
+            ),
+          );
         }
+      }
+    } catch (error) {
+      console.error("Stream reading error:", error);
+      updateLastMessage(
+        error instanceof Error && error.name === "AbortError"
+          ? "Request timed out. Please try again."
+          : `Error: ${error instanceof Error ? error.message : "Failed to connect to chat service"}`,
+      );
+    } finally {
+      setIsLoading(false);
+    }
+  }, [
+    inputMessage,
+    currentConversationId,
+    isLoading,
+    addMessage,
+    updateLastMessage,
+    debouncedUpdate,
+    currentConversation?.messages,
+    selectedModel,
+  ]);
 
-        readStream();
-      })
-      .catch((error) => {
-        console.error("Error connecting to Ollama", error);
-        handleStreamError();
-      });
-  }, [inputMessage, currentConversationId, isLoading, addMessage, updateLastMessage]);
+  const handleInputFocus = useCallback(() => {
+    if (currentConversationId === null) {
+      createNewConversation();
+    }
+  }, [currentConversationId, createNewConversation]);
 
-  const handleStreamError = useCallback(() => {
-    let errorContent = "An error occurred while connecting to Ollama";
-    errorContent += "Please ensure:\n";
-    errorContent += "1. Ollama is installed and running\n";
-    errorContent += "2. The server is accessible at http://192.168.2.23:11434\n";
-    errorContent += "3. The deepseek-r1 model is installed (`ollama pull deepseek-r1`)\n";
-
-    const errorMessage: Message = {
-      id: nanoid(),
-      content: "Failed to connect to Ollama",
-      sender: "ai",
+  // Cleanup Effects
+  useEffect(() => {
+    return () => {
+      if (cleanupTimeout.current) {
+        clearTimeout(cleanupTimeout.current);
+      }
+      if (abortController.current) {
+        abortController.current.abort();
+      }
+      messageCache.current.clear();
+      debouncedUpdate.cancel();
     };
-    addMessage(errorMessage);
-    setIsLoading(false);
-  }, [addMessage]);
+  }, [debouncedUpdate]);
 
   useEffect(() => {
-    const viewport = document.querySelector("[data-radix-scroll-area-viewport]");
-    if (viewport) {
-      const lastMessage = viewport.lastElementChild?.lastElementChild;
-      lastMessage?.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [currentConversation?.messages]);
+    scrollToBottom();
+  }, [currentConversation?.messages, scrollToBottom]);
 
   return (
     <>
-      <div className="border-border w-64 border bg-background p-4 text-foreground">
-        <div className="mb-4 flex w-full items-center justify-between">
-          <h2 className="text-xl font-bold">JJCX Chat</h2>
-          <Button variant="ghost" onClick={createNewConversation} className="">
-            <SquarePen size={20} />
-          </Button>
+      <Sidebar
+        conversations={conversations}
+        currentConversationId={currentConversationId}
+        onConversationSelect={setCurrentConversationId}
+        onNewChat={createNewConversation}
+      />
+      <div className="flex h-screen w-full flex-1 flex-col text-foreground">
+        <div className="mx-auto max-w-3xl flex-1">
+          <MessageList
+            messages={currentConversation?.messages || []}
+            onScrollRef={(ref) => (messagesEndRef.current = ref)}
+          />
         </div>
-        <ScrollArea className="h-[calc(100vh-10rem)]">
-          {conversations.map((conversation) => (
-            <div
-              key={conversation.id}
-              className={`mb-2 cursor-pointer rounded p-2 ${conversation.id === currentConversationId ? "bg-background" : "hover:bg-gray-700"}`}
-              onClick={() => setCurrentConversationId(conversation.id)}
-            >
-              {conversation.title}
-            </div>
-          ))}
-        </ScrollArea>
-      </div>
-      <div className="mx-auto flex max-w-4xl flex-1 flex-col bg-background text-foreground">
-        <ScrollArea className="flex-1 p-4">
-          <div ref={scrollRef}>
-            {currentConversation?.messages.map((message) => (
-              <div
-                className={`max-w-[90%] rounded-lg p-3 ${message.sender === "user" ? "bg-accent rounded-2xl text-foreground" : "bg-background text-foreground"}`}
-              >
-                {message.sender === "ai" ? (
-                  message.content.startsWith("<think>") ? (
-                    message.content.split(/(<think>[\s\S]*?<\/think>)/).map((part, index) => {
-                      const key = `${message.id}-part-${index}-${part.slice(0, 10)}`;
-                      if (part.startsWith("<think>")) {
-                        return (
-                          <div
-                            key={key}
-                            className="text-muted-foreground border-border mb-2 border-l-2 bg-background p-2 text-sm italic"
-                          >
-                            <ReactMarkdown
-                              remarkPlugins={[remarkGfm]}
-                              components={{
-                                code({ node, inline, className, children, ...props }: any) {
-                                  const match = /language-(\w+)/.exec(className || "");
-                                  return inline ? (
-                                    <code
-                                      className="bg-muted rounded px-1.5 py-0.5 text-sm"
-                                      {...props}
-                                    >
-                                      {children}
-                                    </code>
-                                  ) : (
-                                    <SyntaxHighlighter
-                                      language={match ? match[1] : ""}
-                                      style={oneDark}
-                                      PreTag="div"
-                                      className="rounded-lg"
-                                      {...props}
-                                    >
-                                      {String(children).replace(/\n$/, "")}
-                                    </SyntaxHighlighter>
-                                  );
-                                },
-                              }}
-                            >
-                              {part.replace(/<\/?think>/g, "")}
-                            </ReactMarkdown>
-                          </div>
-                        );
-                      } else if (part.trim() !== "") {
-                        return (
-                          <div key={key}>
-                            <ReactMarkdown
-                              key={`markdown-${key}`}
-                              remarkPlugins={[remarkGfm]}
-                              components={{
-                                code({ node, inline, className, children, ...props }: any) {
-                                  const match = /language-(\w+)/.exec(className || "");
-                                  return inline ? (
-                                    <code
-                                      className="bg-muted rounded px-1.5 py-0.5 text-sm"
-                                      {...props}
-                                    >
-                                      {children}
-                                    </code>
-                                  ) : (
-                                    <SyntaxHighlighter
-                                      language={match ? match[1] : ""}
-                                      style={oneDark}
-                                      PreTag="div"
-                                      className="rounded-lg"
-                                      {...props}
-                                    >
-                                      {String(children).replace(/\n$/, "")}
-                                    </SyntaxHighlighter>
-                                  );
-                                },
-                              }}
-                            >
-                              {part}
-                            </ReactMarkdown>
-                          </div>
-                        );
-                      }
-                      return null;
-                    })
-                  ) : (
-                    <ReactMarkdown
-                      key={`markdown-${message.id}`}
-                      remarkPlugins={[remarkGfm]}
-                      components={{
-                        code({ node, inline, className, children, ...props }: any) {
-                          const match = /language-(\w+)/.exec(className || "");
-                          return inline ? (
-                            <code className="bg-muted rounded px-1.5 py-0.5 text-sm" {...props}>
-                              {children}
-                            </code>
-                          ) : (
-                            <SyntaxHighlighter
-                              language={match ? match[1] : ""}
-                              style={oneDark}
-                              PreTag="div"
-                              className="rounded-lg"
-                              {...props}
-                            >
-                              {String(children).replace(/\n$/, "")}
-                            </SyntaxHighlighter>
-                          );
-                        },
-                      }}
-                    >
-                      {message.content}
-                    </ReactMarkdown>
-                  )
-                ) : (
-                  <div className="whitespace-pre-wrap">{message.content}</div>
-                )}
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
-        <div className="bg-muted rounded-t-2xl border-t p-4">
-          <div className="flex w-full flex-col items-center">
-            <div className="flex w-full">
-              <Input
-                type="text"
-                placeholder="Type your message..."
-                value={inputMessage}
-                onChange={(e) => setInputMessage(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-                className="mr-2 flex-1"
-                onFocus={handleInputFocus}
-              />
-              <Button variant="ghost" onClick={handleSendMessage}>
-                <Send size={20} />
-              </Button>
-            </div>
-            <div className="flex w-full">Model picker</div>
-          </div>
-        </div>
+        <ChatInput
+          inputMessage={inputMessage}
+          onInputChange={(e) => setInputMessage(e.target.value)}
+          onSendMessage={handleSendMessage}
+          onFocus={handleInputFocus}
+          onModelSelect={handleModelChange}
+          selectedModel={selectedModel}
+        />
       </div>
     </>
   );
