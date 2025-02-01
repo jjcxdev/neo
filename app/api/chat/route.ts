@@ -21,6 +21,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "No prompt provided" }, { status: 400 });
     }
 
+    const ollamaHost = process.env.OLLAMA_HOST || "http://localhost:11434";
     // Format conversation history for context
     const conversationContext = messages
       .map((msg: Message) => `${msg.role === "user" ? "Human" : "Assistant"}: ${msg.content}`)
@@ -32,8 +33,7 @@ export async function POST(request: Request) {
       : `Human: ${prompt}\n\Assistant:`;
 
     // Make the request to the Ollama API
-    // Note: The IP and port should match your Ollama server configuration
-    const response = await fetch("http://192.168.2.23:11434/api/generate", {
+    const response = await fetch(`${ollamaHost}/api/generate`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
