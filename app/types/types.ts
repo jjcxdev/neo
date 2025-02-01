@@ -64,4 +64,5 @@ export interface SidebarProps {
   currentConversationId: string | null;
   onConversationSelect: (id: string) => void;
   onNewChat: () => void;
+  onDeleteConversation: (id: string) => void;
 }

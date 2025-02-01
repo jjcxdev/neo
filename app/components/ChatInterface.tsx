@@ -4,7 +4,7 @@ import { useCallback, useState, useEffect, useRef, useMemo } from "react";
 import type { Message, Conversation } from "../types/types";
 import { nanoid } from "nanoid";
 import React from "react";
-import _, { set } from "lodash";
+import _, { first, set } from "lodash";
 import {
   MAX_VISIBLE_MESSAGES,
   MAX_CONVERSATIONS,
@@ -34,6 +34,16 @@ export default function ChatInterface() {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, []);
 
+  const handleNewChat = useCallback(() => {
+    const newConversation: Conversation = {
+      id: nanoid(),
+      title: "New Chat",
+      messages: [],
+    };
+    setConversations((prev) => [newConversation, ...prev]);
+    setCurrentConversationId(newConversation.id);
+  }, []);
+
   const createNewConversation = useCallback(() => {
     if (conversations.length >= MAX_CONVERSATIONS) {
       const toRemove = conversations.slice(0, -MAX_CONVERSATIONS + 1);
@@ -42,16 +52,37 @@ export default function ChatInterface() {
         localStorage.removeItem(`chat_archive_${conv.id}`);
       });
     }
+    handleNewChat();
+  }, [conversations.length, handleNewChat]);
 
-    const newConversation: Conversation = {
-      id: nanoid(),
-      title: `New Chat`,
-      messages: [],
-    };
+  const handleDeleteConversation = useCallback(
+    (id: string) => {
+      setConversations((prev) => {
+        const newConversation = prev.filter((conv) => conv.id !== id);
+        if (newConversation.length === 0) {
+          const newConversation: Conversation = {
+            id: nanoid(),
+            title: "NewChat",
+            messages: [],
+          };
+          return [newConversation];
+        }
+        return newConversation;
+      });
 
-    setConversations((prev) => [...prev.slice(-MAX_CONVERSATIONS + 1), newConversation]);
-    setCurrentConversationId(newConversation.id);
-  }, [conversations.length]);
+      // If we delete the current conversation, switch to the first available one
+      if (id === currentConversationId) {
+        setConversations((prev) => {
+          const firstConversation = prev[0];
+          if (firstConversation) {
+            setCurrentConversationId(firstConversation.id);
+          }
+          return prev;
+        });
+      }
+    },
+    [currentConversationId],
+  );
 
   const handleModelChange = useCallback(
     (model: string) => {
@@ -424,6 +455,7 @@ Title:`,
         currentConversationId={currentConversationId}
         onConversationSelect={setCurrentConversationId}
         onNewChat={createNewConversation}
+        onDeleteConversation={handleDeleteConversation}
       />
       <div className="flex h-screen w-full flex-1 flex-col items-center pt-8 text-foreground">
         <div className="w-full max-w-3xl flex-1">
