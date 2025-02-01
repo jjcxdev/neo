@@ -7,17 +7,14 @@ export function ChatInput({
   inputMessage,
   onInputChange,
   onSendMessage,
+  onModelSelect,
   onFocus,
   selectedModel,
 }: ChatInputProps) {
-  function onModelSelect(model: string): void {
-    throw new Error("Function not implemented.");
-  }
-
   return (
-    <div className="sticky bottom-0 mt-4">
+    <div className="sticky bottom-0 mt-4 w-full">
       <div className="flex w-full justify-center">
-        <div className="mx-auto flex w-full max-w-4xl flex-col items-start gap-2 rounded-t-3xl bg-accent">
+        <div className="mx-auto flex w-full max-w-4xl flex-col items-start rounded-t-3xl bg-accent">
           <Textarea
             placeholder="Type your message..."
             value={inputMessage}
@@ -31,9 +28,11 @@ export function ChatInput({
             }}
             autoFocus
             onFocus={onFocus}
-            className="flex-1 resize-none border-0 p-4"
+            className="m-4 mx-auto mb-0 max-w-[96%] flex-1 resize-none border-0"
           />
-          <MemoizedModelSelector onModelSelect={onModelSelect} currentModel={selectedModel} />
+          <div className="m-4">
+            <MemoizedModelSelector onModelSelect={onModelSelect} currentModel={selectedModel} />
+          </div>
         </div>
       </div>
     </div>

@@ -15,7 +15,7 @@ export function Sidebar({
     <div className="w-64 p-4 text-foreground">
       <div className="fixed left-0 top-0 h-screen w-64 border-r-2 bg-background p-4 text-foreground">
         <div className="mb-4 flex w-full items-center justify-between">
-          <h2 className={`${neo.className} text-5xl uppercase`}>Neo</h2>
+          <h2 className={`${neo.className} p-2 text-5xl uppercase`}>Neo</h2>
           <Button variant="ghost" onClick={onNewChat}>
             <SquarePen size={20} />
           </Button>
@@ -24,7 +24,7 @@ export function Sidebar({
           {conversations.map((conversation) => (
             <div
               key={conversation.id}
-              className={`mb-2 cursor-pointer rounded p-2 ${conversation.id === currentConversationId ? "bg-accent hover:bg-neutral-950" : "hover:bg-neutral-950"}`}
+              className={`mb-2 cursor-pointer truncate whitespace-nowrap rounded p-2 ${conversation.id === currentConversationId ? "bg-accent hover:bg-neutral-950" : "hover:bg-neutral-950"}`}
               onClick={() => onConversationSelect(conversation.id)}
             >
               {conversation.title}

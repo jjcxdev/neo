@@ -1,11 +1,12 @@
 import ChatInterface from "./components/ChatInterface";
-import MatrixRain from "./components/MatrixRain";
+import { AuthGuard } from "./components/AuthGuard";
 
 export default function Home() {
   return (
-    <div className="flex h-screen text-foreground">
-      {/* <MatrixRain /> */}
-      <ChatInterface />
-    </div>
+    <AuthGuard>
+      <div className="flex h-screen text-foreground">
+        <ChatInterface />
+      </div>
+    </AuthGuard>
   );
 }

@@ -45,7 +45,7 @@ export default function ChatInterface() {
 
     const newConversation: Conversation = {
       id: nanoid(),
-      title: `New Chat ${conversations.length + 1}`,
+      title: `New Chat`,
       messages: [],
     };
 
@@ -207,6 +207,8 @@ export default function ChatInterface() {
     let updateQueue: string[] = [];
     let lastUpdate = Date.now();
     let aiContent = "";
+    let currentThinkBlock = "";
+    let isInsideThinkBlock = false;
 
     try {
       const response = await fetch("/api/chat", {
@@ -232,7 +234,15 @@ export default function ChatInterface() {
 
       while (true) {
         const { done, value } = await reader.read();
-        if (done) break;
+        if (done) {
+          // Make sure we process any remaining content in the updateQueue
+          if (updateQueue.length > 0) {
+            aiContent += updateQueue.join("");
+            updateQueue = [];
+          }
+
+          break;
+        }
 
         const text = decoder.decode(value);
         const lines = text.split("\n").filter((line) => line.trim());
@@ -241,7 +251,24 @@ export default function ChatInterface() {
           try {
             const parsedChunk = JSON.parse(line);
             if (parsedChunk.response) {
-              updateQueue.push(parsedChunk.response);
+              const chunk = parsedChunk.response;
+              if (chunk.includes("<think>")) {
+                isInsideThinkBlock = true;
+                updateQueue.push("<think>");
+              }
+
+              if (isInsideThinkBlock) {
+                if (chunk.includes("</think>")) {
+                  isInsideThinkBlock = false;
+                  updateQueue.push(chunk.replace("</think>", ""));
+                  updateQueue.push("</think>");
+                } else {
+                  updateQueue.push(chunk);
+                }
+              } else {
+                updateQueue.push(chunk);
+              }
+
               if (Date.now() - lastUpdate > UPDATE_THRESHOLD) {
                 aiContent += updateQueue.join("");
                 updateQueue = [];
@@ -261,56 +288,85 @@ export default function ChatInterface() {
 
       // Generate title if this is the first message
       if (isFirstMessage) {
-        const titleResponse = await fetch("/api/chat", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            prompt: `Create a very concise title (2-3 words maximum) that capture the main topic of this conversation. Do not use quotes. Do not add any explanation. User: "${messageToSend}" Assistant: "${aiContent}" Title:`,
-            model: selectedModel,
-            messages: [],
-          }),
-        });
+        try {
+          const titleResponse = await fetch("/api/chat", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              prompt: `Based on this message, give me a 2-3 word title. Only output the title words, nothing else.
 
-        if (titleResponse.ok) {
-          let titleContent = "";
-          const titleReader = titleResponse.body?.getReader();
-          const titleDecoder = new TextDecoder();
+Message: "${messageToSend}"
 
-          if (titleReader) {
-            while (true) {
-              const { done, value } = await titleReader.read();
-              if (done) break;
-              const text = titleDecoder.decode(value);
-              const lines = text.split("\n").filter((line) => line.trim());
-              for (const line of lines) {
-                try {
-                  const parsedChunk = JSON.parse(line);
-                  if (parsedChunk.response) {
-                    titleContent += parsedChunk.response;
+Title:`,
+              model: selectedModel,
+              messages: [],
+            }),
+          });
+
+          if (titleResponse.ok) {
+            let titleContent = "";
+            const titleReader = titleResponse.body?.getReader();
+            const titleDecoder = new TextDecoder();
+
+            if (titleReader) {
+              try {
+                while (true) {
+                  const { done, value } = await titleReader.read();
+                  if (done) break;
+                  const text = titleDecoder.decode(value);
+                  const lines = text.split("\n").filter((line) => line.trim());
+                  for (const line of lines) {
+                    try {
+                      const parsedChunk = JSON.parse(line);
+                      if (parsedChunk.response) {
+                        titleContent += parsedChunk.response;
+                      }
+                    } catch (e) {
+                      continue;
+                    }
                   }
-                } catch (e) {
-                  continue;
                 }
+              } finally {
+                titleReader.releaseLock();
               }
             }
+
+            const processedTitle = titleContent
+              .trim()
+              .replace(/["']/g, "") // remove quotes
+              .replace(/^Title:?\s*/i, "") // remove "Title:" prefix
+              .replace(/[<>]/g, "") // remove any HTML-like tags
+              .replace(/think/gi, "") // remove any instances of "think"
+              .replace(/\s+/g, " ") // normalize whitespace
+              .split(/\s+/) // split into words
+              .slice(0, 3) // limit to 3 words
+              .join(" ")
+              .substring(0, 30); // hard limit on length
+
+            // Update the conversation title
+            setConversations((prev) =>
+              prev.map((conv) =>
+                conv.id === currentConversationId
+                  ? {
+                      ...conv,
+                      title: processedTitle || "New Chat",
+                    }
+                  : conv,
+              ),
+            );
           }
-
-          // Process the title to ensure its concise
-          const processedTitle = titleContent
-            .trim()
-            .replace(/["']/g, "") // remove quotes
-            .replace(/^Title:?\s*/i, "") // remove "Title:" prefix
-            .split(/\s+/) // split into words
-            .slice(0, 4) // limit to 4 words
-            .join(" ");
-
-          // Update the conversation title
+        } catch (error) {
+          console.error("Error generating title:", error);
+          // Set a fallback title
           setConversations((prev) =>
             prev.map((conv) =>
               conv.id === currentConversationId
-                ? { ...conv, title: titleContent.trim().replace(/["']/g, "") }
+                ? {
+                    ...conv,
+                    title: "New Chat",
+                  }
                 : conv,
             ),
           );
@@ -369,8 +425,8 @@ export default function ChatInterface() {
         onConversationSelect={setCurrentConversationId}
         onNewChat={createNewConversation}
       />
-      <div className="flex h-screen w-full flex-1 flex-col text-foreground">
-        <div className="mx-auto max-w-3xl flex-1">
+      <div className="flex h-screen w-full flex-1 flex-col items-center pt-8 text-foreground">
+        <div className="w-full max-w-3xl flex-1">
           <MessageList
             messages={currentConversation?.messages || []}
             onScrollRef={(ref) => (messagesEndRef.current = ref)}
