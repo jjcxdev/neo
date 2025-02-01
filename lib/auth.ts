@@ -4,7 +4,7 @@ type User = {
 };
 
 export function getValidUsers(): User[] {
-  const authUsers = process.env.AUTH_USERS || "";
+  const authUsers = process.env.AUTH_USERS || process.env.NEXT_PUBLIC_AUTH_USERS || "";
   console.log("Raw AUTH_USERS:", authUsers); // Debug log
 
   const users = authUsers
