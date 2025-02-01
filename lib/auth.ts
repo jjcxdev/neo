@@ -1,11 +1,19 @@
-// Note: In production, use environment variables for these values
-export const VALID_USERS = [
-  { username: "justin", password: "9669" },
-  { username: "user2", password: "pass2" },
-] as const;
+type User = {
+  username: string;
+  password: string;
+};
 
-export type AuthUser = (typeof VALID_USERS)[number];
+export function getValidUsers(): User[] {
+  const authUsers = process.env.AUTH_USERS || "";
+  return authUsers.split(",").map((userString) => {
+    const [username, password] = userString.split(":");
+    return { username, password };
+  });
+}
 
 export function validateCredentials(username: string, password: string): boolean {
-  return VALID_USERS.some((user) => user.username === username && user.password === password);
+  const validUsers = getValidUsers();
+  return validUsers.some((user) => user.username === username && user.password === password);
 }
+
+export type AuthUser = ReturnType<typeof getValidUsers>[number];
