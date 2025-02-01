@@ -465,13 +465,15 @@ Title:`,
 
   return (
     <>
-      <Sidebar
-        conversations={conversations}
-        currentConversationId={currentConversationId}
-        onConversationSelect={setCurrentConversationId}
-        onNewChat={createNewConversation}
-        onDeleteConversation={handleDeleteConversation}
-      />
+      <div className="hidden md:flex">
+        <Sidebar
+          conversations={conversations}
+          currentConversationId={currentConversationId}
+          onConversationSelect={setCurrentConversationId}
+          onNewChat={createNewConversation}
+          onDeleteConversation={handleDeleteConversation}
+        />
+      </div>
       <div className="flex h-screen w-full flex-1 flex-col items-center pt-8 text-foreground">
         <div className="w-full max-w-3xl flex-1">
           <MessageList
