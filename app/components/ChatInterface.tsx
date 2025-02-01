@@ -448,6 +448,21 @@ Title:`,
     scrollToBottom();
   }, [currentConversation?.messages, scrollToBottom]);
 
+  const fetchModels = async () => {
+    try {
+      const response = await fetch("/api/models");
+      if (!response.ok) {
+        throw new Error("Failed to fetch models");
+      }
+      const data = await response.json();
+      // Process models as before
+      return data;
+    } catch (error) {
+      console.error("Error fetching models:", error);
+      return [];
+    }
+  };
+
   return (
     <>
       <Sidebar
