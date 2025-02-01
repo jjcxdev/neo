@@ -5,7 +5,9 @@ type User = {
 
 export function getValidUsers(): User[] {
   const authUsers = process.env.AUTH_USERS || "";
-  return authUsers
+  console.log("Raw AUTH_USERS:", authUsers); // Debug log
+
+  const users = authUsers
     .split(",")
     .map((pair) => pair.trim())
     .filter((pair) => pair.includes(":"))
@@ -16,11 +18,24 @@ export function getValidUsers(): User[] {
         password: password.trim(),
       };
     });
+
+  console.log("Parsed Users:", users); // Debug log
+  return users;
 }
 
 export function validateCredentials(username: string, password: string): boolean {
   const validUsers = getValidUsers();
-  return validUsers.some((user) => user.username === username && user.password === password);
+  console.log("Attempting login with:", { username, password }); // Debug log
+
+  const isValid = validUsers.some((user) => {
+    const usernameMatch = user.username === username.toLowerCase().trim();
+    const passwordMatch = user.password === password.trim();
+    console.log("Checking against:", user, { usernameMatch, passwordMatch }); // Debug log
+    return usernameMatch && passwordMatch;
+  });
+
+  console.log("Login valid?", isValid); // Debug log
+  return isValid;
 }
 
 export type AuthUser = ReturnType<typeof getValidUsers>[number];
